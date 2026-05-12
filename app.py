@@ -1,120 +1,209 @@
-from flask import Flask, jsonify, render_template_string
-import random, os
-from math import comb
-import matplotlib.pyplot as plt
+from flask import Flask, jsonify, request, render_template_string
+import requests, random, os
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
 # =========================
-# ✅ 模擬歷史資料（1000期）
+# ✅ 三來源抓取
 # =========================
-def gen_data(n=1000):
-    return [random.sample(range(1,81),20) for _ in range(n)]
+
+def fetch_api():
+    try:
+        url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/LatestBingoResult"
+        r = requests.get(url, timeout=5).json()
+        d = r["content"]["lotteryBingoLatestPost"]
+
+        return {
+            "numbers": [int(x) for x in d["bigShowOrder"]],
+            "time": d["dDate"].replace("T"," "),
+            "term": int(d["drawTerm"]),
+            "source": "api"
+        }
+    except:
+        return None
+
+
+def fetch_auzo():
+    try:
+        html = requests.get("https://lotto.auzonet.com/bingobingoV1.php", timeout=5).text
+        soup = BeautifulSoup(html, "lxml")
+
+        for tr in soup.find_all("tr"):
+            text = tr.get_text(" ", strip=True)
+            parts = text.split()
+
+            if len(parts) > 22 and parts[0].isdigit():
+                term = int(parts[0])
+                time = parts[1]
+                nums = list(map(int, parts[2:22]))
+
+                return {
+                    "numbers": nums,
+                    "time": time,
+                    "term": term,
+                    "source": "auzo"
+                }
+    except:
+        return None
+
+
+def fetch_pilio():
+    try:
+        html = requests.get("https://www.pilio.idv.tw/bingo/list.asp", timeout=5).text
+        soup = BeautifulSoup(html, "lxml")
+
+        text = soup.get_text()
+        for line in text.split("\n"):
+            parts = line.strip().split()
+
+            if len(parts) >= 21 and parts[0].isdigit():
+                term = int(parts[0])
+                nums = list(map(int, parts[1:21]))
+                return {
+                    "numbers": nums,
+                    "time": "latest",
+                    "term": term,
+                    "source": "pilio"
+                }
+    except:
+        return None
+
 
 # =========================
-# ✅ 機率
+# ✅ 取最新（用期數）
 # =========================
-def prob(k,h):
-    return comb(20,h)*comb(60,k-h)/comb(80,k)
+def get_latest():
+    data = [fetch_api(), fetch_auzo(), fetch_pilio()]
+    data = [d for d in data if d]
 
-PAYOUT = {
-    4:{2:25,3:100,4:1000},
-    6:{3:25,4:200,5:1000,6:25000}
+    if not data:
+        return {"numbers": [], "term": 0, "time": "error", "source": "none"}
+
+    return max(data, key=lambda x: x["term"])
+
+
+# =========================
+# ✅ 選號（核心策略）
+# =========================
+
+def smart_pick(k):
+    # ✅ 均勻分布
+    step = 80 // k
+    nums = [(i * step + random.randint(1, step)) for i in range(k)]
+    return sorted(set([min(80, max(1,x)) for x in nums]))
+
+
+# =========================
+# ✅ 命中計算
+# =========================
+def check_hit(pick, draw):
+    return list(set(pick) & set(draw))
+
+
+# =========================
+# ✅ UI
+# =========================
+
+HTML = """
+<h1>🎯 Bingo AI選號 + 即時監控</h1>
+
+<h3>選號（1~10星）</h3>
+<input id="count" value="10">
+<button onclick="pick()">產生號碼</button>
+
+<div id="my"></div>
+<div id="hit"></div>
+
+<hr>
+
+<button onclick="start()">開始監控</button>
+
+<h3 id="info"></h3>
+<div id="draw"></div>
+
+<script>
+
+let my=[]
+let last=0
+
+function balls(list, hit=[]){
+ return list.map(n=>{
+   let c = hit.includes(n) ? "red" : "orange"
+   return `<span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:${c};color:white;text-align:center;line-height:40px;margin:5px">${n}</span>`
+ }).join("")
 }
 
-# =========================
-# ✅ 隨機選號（分散）
-# =========================
-def pick(k):
-    return random.sample(range(1,81),k)
+async function pick(){
+ let c = document.getElementById("count").value
+ let r = await fetch('/pick?count='+c)
+ let j = await r.json()
 
-# =========================
-# ✅ 命中
-# =========================
-def hit(pick, draw):
-    return len(set(pick)&set(draw))
+ my=j.numbers
 
-# =========================
-# ✅ 單注盈利
-# =========================
-def reward(k,h):
-    return PAYOUT.get(k,{}).get(h,0)
+ document.getElementById("my").innerHTML =
+ "<b>你的號碼</b><br>"+balls(my)
+}
 
-# =========================
-# ✅ 策略（組合）
-# =========================
-def strategy():
-    # ✅ 投資組合
-    return [
-        {"k":4, "n":8},   # 8注4星
-        {"k":6, "n":2}    # 2注6星
-    ]
+function start(){
+ update()
+ setInterval(update,3000)
+}
 
-# =========================
-# ✅ 回測
-# =========================
-def backtest():
-    data = gen_data(500)
-    balance = 0
-    history = []
+async function update(){
+ let r = await fetch('/monitor?nums='+my.join(","))
+ let j = await r.json()
 
-    for d in data:
-        cost = 0
-        profit = 0
+ if(j.term > last){
+   last = j.term
 
-        for s in strategy():
-            for _ in range(s["n"]):
-                p = pick(s["k"])
-                h = hit(p,d)
-                profit += reward(s["k"],h)
-                cost += 25
+   document.getElementById("info").innerHTML =
+   "期數:"+j.term+"<br>時間:"+j.time+" ("+j.source+")"
 
-        balance += (profit - cost)
-        history.append(balance)
+   document.getElementById("draw").innerHTML =
+   balls(j.draw, j.hit)
 
-    return history
+   document.getElementById("hit").innerHTML =
+   "命中:"+j.hit.join(",")
 
-# =========================
-# ✅ 畫圖
-# =========================
-def plot(history):
-    plt.figure()
-    plt.plot(history)
-    plt.title("ROI Backtest")
-    plt.xlabel("round")
-    plt.ylabel("profit")
+   if(j.hit.length >= 3){
+     alert("🎯 命中 "+j.hit.length+" 顆!!")
+   }
+ }
+}
 
-    path = "static.png"
-    plt.savefig(path)
-    plt.close()
-    return path
+</script>
+"""
 
 # =========================
 # ✅ API
 # =========================
+
 @app.route("/")
 def index():
-    return """
-    <h1>🎯 Bingo 策略引擎</h1>
-    <button onclick="run()">回測</button>
-    <div id="img"></div>
+    return render_template_string(HTML)
 
-    <script>
-    async function run(){
-        let r = await fetch('/run')
-        let j = await r.json()
-        document.getElementById("img").innerHTML =
-        "<img src='"+j.img+"?t="+Date.now()+"'>"
+@app.route("/pick")
+def pick_api():
+    c=int(request.args.get("count",10))
+    return {"numbers": smart_pick(c)}
+
+@app.route("/monitor")
+def monitor():
+    nums = request.args.get("nums","")
+    my = [int(x) for x in nums.split(",") if x]
+
+    latest = get_latest()
+
+    hit = check_hit(my, latest["numbers"])
+
+    return {
+        "draw": latest["numbers"],
+        "term": latest["term"],
+        "time": latest["time"],
+        "source": latest["source"],
+        "hit": hit
     }
-    </script>
-    """
-
-@app.route("/run")
-def run():
-    h = backtest()
-    img = plot(h)
-
-    return jsonify({"img": "/" + img})
 
 @app.route("/health")
 def health():
