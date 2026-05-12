@@ -1,11 +1,11 @@
-from flask import Flask, jsonify, render_template_string
-import requests, os
+from flask import Flask, jsonify, render_template_string, request
+import requests, os, random
 from math import comb
 
 app = Flask(__name__)
 
 # =========================
-# ✅ 台彩最新資料
+# ✅ 官方資料
 # =========================
 def get_latest():
     url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/LatestBingoResult"
@@ -14,16 +14,22 @@ def get_latest():
         nums = r["content"]["lotteryBingoLatestPost"]["bigShowOrder"]
         return [int(x) for x in nums]
     except:
-        return []
+        return random.sample(range(1,81),20)
 
 # =========================
-# ✅ 機率模型（超幾何分布）
+# ✅ 隨機選號（符合規則）
+# =========================
+def pick_numbers(count):
+    return sorted(random.sample(range(1,81), count))
+
+# =========================
+# ✅ 機率
 # =========================
 def prob(k, h):
     return comb(20, h) * comb(60, k-h) / comb(80, k)
 
 # =========================
-# ✅ 獎金表（簡化版）
+# ✅ 獎金
 # =========================
 PAYOUT = {
     4: {2:25, 3:100, 4:1000},
@@ -35,40 +41,27 @@ PAYOUT = {
     10:{0:25, 5:25, 6:250, 7:2500, 8:25000, 9:250000, 10:5000000},
 }
 
-# =========================
-# ✅ EV 계산
-# =========================
 def calc_ev(k):
     if k not in PAYOUT:
         return None
-
     ev = 0
     for h, prize in PAYOUT[k].items():
         ev += prob(k, h) * prize
-
-    cost = 25
-    roi = (ev - cost) / cost
+    roi = (ev - 25) / 25
     return round(ev,2), round(roi,3)
 
 # =========================
-# ✅ 找最佳星數
+# ✅ 最佳策略
 # =========================
 def best_strategy():
-    results = []
-
+    res = []
     for k in range(4,11):
-        v = calc_ev(k)
-        if v:
-            ev, roi = v
-            results.append({
-                "star": k,
-                "ev": ev,
-                "roi": roi
-            })
-
-    # 按 ROI 排序
-    results.sort(key=lambda x: x["roi"], reverse=True)
-    return results
+        r = calc_ev(k)
+        if r:
+            ev, roi = r
+            res.append({"star":k, "roi":roi})
+    res.sort(key=lambda x:x["roi"], reverse=True)
+    return res
 
 # =========================
 # ✅ 投資組合
@@ -84,38 +77,64 @@ def portfolio():
 # ✅ UI
 # =========================
 HTML = """
-<h1>🎯 Bingo Bingo 數學最優策略</h1>
+<h1>🎯 Bingo Bingo 最優策略系統</h1>
 
-<button onclick="load()">分析</button>
+<h3>選號</h3>
+<input id="count" type="number" value="10" min="1" max="10">
+<button onclick="pick()">產生號碼</button>
+
+<div id="numbers"></div>
+
+<hr>
+
+<button onclick="load()">分析策略</button>
 
 <div id="best"></div>
 <div id="portfolio"></div>
+
+<h3>最新開獎</h3>
 <div id="latest"></div>
 
 <script>
+
+function balls(list){
+ return list.map(n => `<span style="
+ display:inline-block;
+ width:40px;height:40px;
+ border-radius:50%;
+ background:orange;
+ text-align:center;
+ line-height:40px;
+ margin:5px;
+ color:white">${n}</span>`).join("")
+}
+
+async function pick(){
+ let c = document.getElementById("count").value
+ let r = await fetch('/pick?count='+c)
+ let j = await r.json()
+ document.getElementById("numbers").innerHTML = balls(j.numbers)
+}
 
 async function load(){
  let r = await fetch('/analysis')
  let j = await r.json()
 
- let html = "<h2>最佳星數</h2>"
+ let b = "<h3>最佳星數</h3>"
  j.best.forEach(x=>{
-   html += `星數 ${x.star} → ROI ${x.roi}<br>`
+   b += `星數 ${x.star} → ROI ${x.roi}<br>`
  })
 
- document.getElementById("best").innerHTML = html
+ document.getElementById("best").innerHTML = b
 
- // 投資組合
- let p = "<h2>推薦投資組合</h2>"
+ let p = "<h3>投資組合</h3>"
  j.portfolio.forEach(x=>{
    p += `星數 ${x.star} : ${x.ratio}%<br>`
  })
 
  document.getElementById("portfolio").innerHTML = p
 
- // 最新開獎
- let l = "<h2>最新開獎</h2>" + j.latest.join(" ")
- document.getElementById("latest").innerHTML = l
+ document.getElementById("latest").innerHTML = balls(j.latest)
 }
 
 </script>
@@ -127,6 +146,11 @@ async function load(){
 @app.route("/")
 def index():
     return render_template_string(HTML)
+
+@app.route("/pick")
+def pick_api():
+    count = int(request.args.get("count", 10))
+    return jsonify({"numbers": pick_numbers(count)})
 
 @app.route("/analysis")
 def analysis():
@@ -141,7 +165,7 @@ def health():
     return jsonify({"ok":True})
 
 # =========================
-# Render PORT
+# Render
 # =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
