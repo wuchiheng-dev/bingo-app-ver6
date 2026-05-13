@@ -2,22 +2,15 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Bingo AI</title>
+<title>Bingo</title>
 </head>
 <body>
 
-<h2>🎯 Bingo同步版</h2>
+<h2>🎯 Bingo穩定版</h2>
 
 <select id="count">
-<option value="1">1星</option>
-<option value="2">2星</option>
 <option value="3">3星</option>
-<option value="4">4星</option>
 <option value="5">5星</option>
-<option value="6">6星</option>
-<option value="7">7星</option>
-<option value="8">8星</option>
-<option value="9">9星</option>
 <option value="10">10星</option>
 </select>
 
@@ -51,7 +44,7 @@ function pick(){
  .then(r=>r.json())
  .then(j=>{
    my=j.numbers
-   document.getElementById("my").innerText=
+   document.getElementById("my").innerText =
    "你的號碼："+my.join(", ")
  })
 }
@@ -64,7 +57,7 @@ function start(){
 
 function update(){
  if(my.length===0){
-   document.getElementById("hit").innerText="請先選號"
+   document.getElementById("hit").innerText="⚠請先選號"
    return
  }
 
@@ -72,15 +65,19 @@ function update(){
  .then(r=>r.json())
  .then(j=>{
 
-   document.getElementById("info").innerText=
-   "期數:"+j.term+" ("+j.source+")\\n時間:"+j.time
+   if(!j.draw || j.draw.length===0){
+      document.getElementById("draw").innerText="⚠抓不到資料"
+      return
+   }
 
-   document.getElementById("draw").innerText=
+   document.getElementById("info").innerText =
+   "期數:"+j.term+" ("+j.source+")\n時間:"+j.time
+
+   document.getElementById("draw").innerText =
    "開獎："+balls(j.draw,j.hit)
 
-   document.getElementById("hit").innerText=
+   document.getElementById("hit").innerText =
    "命中："+j.hit.length+" 顆 → "+j.hit.join(", ")
-
  })
 }
 
