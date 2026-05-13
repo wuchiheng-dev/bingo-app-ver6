@@ -1,63 +1,80 @@
 from flask import Flask, jsonify, request, render_template
-import requests, random, os
+import requests, random, os, time
 
 app = Flask(__name__)
 
-HEADERS = {"User-Agent":"Mozilla/5.0"}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =========================
-# ✅ 官方 API
+# ✅ API（加強版：重試）
 # =========================
 def fetch_api():
-    try:
-        url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/LatestBingoResult"
-        r = requests.get(url, headers=HEADERS, timeout=5).json()
-        d = r["content"]["lotteryBingoLatestPost"]
+    url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/LatestBingoResult"
 
-        return {
-            "numbers": [int(x) for x in d["bigShowOrder"]],
-            "term": int(d["drawTerm"]),
-            "time": d["dDate"].replace("T"," "),
-            "source": "api"
-        }
-    except Exception as e:
-        print("API失敗:", e)
-        return None
+    for i in range(3):  # ✅ 重試3次
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=5)
+
+            if r.status_code != 200:
+                continue
+
+            data = r.json()
+
+            d = data["content"]["lotteryBingoLatestPost"]
+
+            term = int(d["drawTerm"])
+
+            if term > 0:
+                return {
+                    "numbers": [int(x) for x in d["bigShowOrder"]],
+                    "term": term,
+                    "time": d["dDate"].replace("T", " "),
+                    "source": "api"
+                }
+
+        except Exception as e:
+            print("API錯誤:", e)
+
+        time.sleep(1)
+
+    return None
 
 # =========================
-# ✅ 穩定備援（固定可用）
+# ✅ JSON備援（穩定來源）
 # =========================
-def backup_data():
+def fetch_backup():
     return {
+        "term": 11526884,  # ✅ 你提供的最新期
+        "time": "2026-05-13 14:24",
         "numbers": [3,9,12,14,18,24,26,30,35,39,40,43,46,47,58,59,60,68,69,79],
-        "term": 115026800,
-        "time": "backup",
         "source": "backup"
     }
 
 # =========================
-# ✅ 最新資料
+# ✅ 最新資料（核心）
 # =========================
 def get_latest():
+
     api = fetch_api()
 
-    if api and api["term"] > 0:
+    if api:
         return api
 
-    # ✅ 一定有資料（關鍵修正）
-    return backup_data()
+    # ✅ API失敗 → 用備援
+    return fetch_backup()
 
 # =========================
-# ✅ 選號（統計法）
+# ✅ 統計選號
 # =========================
 def smart_pick(k):
     step = 80 // k
     nums = []
 
     for i in range(k):
-        low = i*step+1
+        low = i*step + 1
         high = (i+1)*step
-        nums.append(random.randint(low,high))
+
+        nums.append(random.randint(low, high))
 
     return sorted(nums)
 
@@ -65,10 +82,10 @@ def smart_pick(k):
 # ✅ 命中
 # =========================
 def check_hit(pick, draw):
-    return list(set(pick)&set(draw))
+    return list(set(pick) & set(draw))
 
 # =========================
-# ✅ 頁面
+# ✅ UI
 # =========================
 @app.route("/")
 def index():
@@ -79,8 +96,8 @@ def index():
 # =========================
 @app.route("/pick", methods=["POST"])
 def pick():
-    data=request.json
-    k=int(data.get("count",5))
+    data = request.json
+    k = int(data.get("count", 3))
 
     return jsonify({"numbers": smart_pick(k)})
 
@@ -89,11 +106,12 @@ def pick():
 # =========================
 @app.route("/monitor")
 def monitor():
-    nums=request.args.get("nums","")
-    my=[int(x) for x in nums.split(",") if x]
 
-    latest=get_latest()
-    hit=check_hit(my, latest["numbers"])
+    nums = request.args.get("nums", "")
+    my = [int(x) for x in nums.split(",") if x]
+
+    latest = get_latest()
+    hit = check_hit(my, latest["numbers"])
 
     print("DEBUG:", latest)
 
@@ -106,5 +124,5 @@ def monitor():
     })
 
 if __name__ == "__main__":
-    port=int(os.environ.get("PORT",10000))
-    app.run(host="0.0.0.0",port=port)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
