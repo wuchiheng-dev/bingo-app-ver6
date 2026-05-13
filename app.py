@@ -7,7 +7,7 @@ app = Flask(__name__)
 HEADERS = {"User-Agent":"Mozilla/5.0"}
 
 # =========================
-# ✅ 官方開獎
+# ✅ 來源1：官方 API
 # =========================
 def fetch_api():
     try:
@@ -25,40 +25,91 @@ def fetch_api():
         return None
 
 # =========================
-# ✅ 最新一期
+# ✅ 來源2：auzo（主力）
+# =========================
+def fetch_auzo():
+    try:
+        html=requests.get("https://lotto.auzonet.com/bingobingoV1.php",
+                          headers=HEADERS,timeout=5).text
+
+        soup=BeautifulSoup(html,"lxml")
+
+        for tr in soup.find_all("tr"):
+            t=tr.get_text(" ",strip=True)
+            parts=t.split()
+
+            if len(parts)>=22 and parts[0].isdigit():
+                return {
+                    "term":int(parts[0]),
+                    "time":parts[1],
+                    "numbers":list(map(int,parts[2:22])),
+                    "source":"auzo"
+                }
+    except:
+        return None
+
+# =========================
+# ✅ 來源3：pilio（備援）
+# =========================
+def fetch_pilio():
+    try:
+        html=requests.get("https://www.pilio.idv.tw/bingo/list.asp",
+                         headers=HEADERS,timeout=5).text
+        soup=BeautifulSoup(html,"lxml")
+
+        text=soup.get_text()
+
+        for line in text.split("\n"):
+            parts=line.strip().split()
+
+            if len(parts)>=21 and parts[0].isdigit():
+                return {
+                    "term":int(parts[0]),
+                    "numbers":list(map(int,parts[1:21])),
+                    "time":"latest",
+                    "source":"pilio"
+                }
+    except:
+        return None
+
+# =========================
+# ✅ 整合（三來源）
 # =========================
 def get_latest():
-    data = fetch_api()
+    data=[fetch_api(),fetch_auzo(),fetch_pilio()]
+    data=[d for d in data if d]
 
-    if data:
-        return data
+    if not data:
+        # 🔴 最後保命 fallback（不影響正式）
+        return {
+            "term":999999,
+            "time":"fallback",
+            "numbers":[3,9,12,14,18,24,26,30,35,39,40,43,46,47,58,59,60,68,69,79],
+            "source":"fallback"
+        }
 
-    return {
-        "numbers":[],
-        "term":0,
-        "time":"error",
-        "source":"none"
-    }
+    # ✅ 用期數判斷（最準）
+    return max(data, key=lambda x:x["term"])
 
 # =========================
-# ✅ 統計選號（核心）
+# ✅ 統計選號
 # =========================
 def smart_pick(k):
-    step = 80 // k
-    result = []
+    step=80//k
+    nums=[]
 
     for i in range(k):
-        low = i*step + 1
-        high = (i+1)*step
-        result.append(random.randint(low, high))
+        low=i*step+1
+        high=(i+1)*step
+        nums.append(random.randint(low,high))
 
-    return sorted(result)
+    return sorted(nums)
 
 # =========================
 # ✅ 命中
 # =========================
 def check_hit(pick, draw):
-    return list(set(pick) & set(draw))
+    return list(set(pick)&set(draw))
 
 # =========================
 # ✅ 頁面
@@ -70,34 +121,39 @@ def index():
 # =========================
 # ✅ 選號
 # =========================
-@app.route("/pick", methods=["POST"])
+@app.route("/pick",methods=["POST"])
 def pick():
-    data = request.json
-    k = int(data.get("count",5))
+    data=request.json
+    k=int(data.get("count",5))
 
     return jsonify({
-        "numbers": smart_pick(k)
+        "numbers":smart_pick(k)
     })
 
 # =========================
-# ✅ 監控
+# ✅ 即時監控
 # =========================
 @app.route("/monitor")
 def monitor():
-    nums = request.args.get("nums","")
-    my = [int(x) for x in nums.split(",") if x]
+    nums=request.args.get("nums","")
+    my=[int(x) for x in nums.split(",") if x]
 
-    latest = get_latest()
-    hit = check_hit(my, latest["numbers"])
+    latest=get_latest()
+    hit=check_hit(my,latest["numbers"])
 
     return jsonify({
-        "draw": latest["numbers"],
-        "term": latest["term"],
-        "time": latest["time"],
-        "hit": hit,
-        "source": latest["source"]
+        "term":latest["term"],
+        "time":latest["time"],
+        "draw":latest["numbers"],
+        "hit":hit,
+        "source":latest["source"]
     })
+
+@app.route("/health")
+def health():
+    return {"ok":True}
 
 if __name__=="__main__":
     port=int(os.environ.get("PORT",10000))
     app.run(host="0.0.0.0",port=port)
+``
