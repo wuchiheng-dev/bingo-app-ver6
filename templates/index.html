@@ -6,7 +6,7 @@
 </head>
 <body>
 
-<h2>🎯 Bingo 單注策略</h2>
+<h2>🎯 Bingo同步版</h2>
 
 <select id="count">
 <option value="1">1星</option>
@@ -34,18 +34,14 @@
 let my=[]
 let timer=null
 
-function balls(draw, hit){
+function balls(draw,hit){
  return draw.map(n=>{
-   if(hit.includes(n)){
-     return "🔴"+n
-   }else{
-     return "⚪"+n
-   }
+   return hit.includes(n)?"🔴"+n:"⚪"+n
  }).join(" ")
 }
 
 function pick(){
- let c = document.getElementById("count").value
+ let c=document.getElementById("count").value
 
  fetch("/pick",{
    method:"POST",
@@ -75,14 +71,16 @@ function update(){
  fetch("/monitor?nums="+my.join(","))
  .then(r=>r.json())
  .then(j=>{
+
    document.getElementById("info").innerText=
    "期數:"+j.term+" ("+j.source+")\\n時間:"+j.time
 
    document.getElementById("draw").innerText=
-   "開獎："+balls(j.draw, j.hit)
+   "開獎："+balls(j.draw,j.hit)
 
    document.getElementById("hit").innerText=
    "命中："+j.hit.length+" 顆 → "+j.hit.join(", ")
+
  })
 }
 
